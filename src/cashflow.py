@@ -13,21 +13,73 @@ print("--- Personal Finance Analyzer ---")
 try:
     file_path = input("Enter the path to your transactions CSV file (e.g., '../data/transactions.csv'): ")
     
-    # Load the CSV file (assume headers are present)
-    df = pd.read_csv(file_path)
+    # Load the CSV file with encoding and delimiter error handling
+    df = None
+    encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
+    delimiters = [',', ';', '\t', '|']
+    
+    for encoding in encodings:
+        for delimiter in delimiters:
+            try:
+                df = pd.read_csv(file_path, encoding=encoding, delimiter=delimiter, on_bad_lines='skip', engine='python')
+                if not df.empty:
+                    print(f"File loaded with {encoding} encoding and '{delimiter}' delimiter.")
+                    break
+            except (UnicodeDecodeError, LookupError, pd.errors.ParserError):
+                continue
+        if df is not None and not df.empty:
+            break
+    
+    # If still no luck, try with error_bad_lines=False (older pandas)
+    if df is None or df.empty:
+        for encoding in encodings:
+            try:
+                df = pd.read_csv(file_path, encoding=encoding, error_bad_lines=False)
+                if not df.empty:
+                    print(f"File loaded with {encoding} encoding (skipping bad lines).")
+                    break
+            except (UnicodeDecodeError, LookupError):
+                continue
+    
+    if df is None or df.empty:
+        raise ValueError("Could not read CSV file. Tried multiple encodings and delimiters. Please ensure the file is a valid CSV.")
+    
+    # Remove empty columns
+    df = df.dropna(axis=1, how='all')
+    
+    # Standardize column names (lowercase and strip whitespace)
+    df.columns = df.columns.str.lower().str.strip()
+    
+    print(f"Available columns: {list(df.columns)}")
     
     # Default required columns
     required_columns = ['date', 'category', 'amount']
     column_mapping = {}
     
-    # Check for missing columns and prompt for alternatives
-    for col in required_columns:
-        if col not in df.columns:
-            alt_col = input(f"Column '{col}' not found. Enter the actual column name (or press Enter to skip): ")
+    # Create flexible mapping for common column name variations
+    column_aliases = {
+        'date': ['date', 'transaction_date', 'trans_date'],
+        'category': ['category', 'description', 'type', 'transaction_type'],
+        'amount': ['amount', 'value', 'transaction_amount']
+    }
+    
+    # Try to auto-map columns
+    for required_col, aliases in column_aliases.items():
+        found = False
+        for alias in aliases:
+            if alias in df.columns:
+                if alias != required_col:
+                    column_mapping[alias] = required_col
+                found = True
+                break
+        
+        if not found:
+            print(f"Column '{required_col}' not found. Available: {list(df.columns)}")
+            alt_col = input(f"Enter the actual column name for '{required_col}': ")
             if alt_col and alt_col in df.columns:
-                column_mapping[col] = alt_col
+                column_mapping[alt_col] = required_col
             else:
-                raise ValueError(f"Required column '{col}' is missing and no valid alternative provided.")
+                raise ValueError(f"Required column '{required_col}' is missing.")
     
     # Rename columns if alternatives were provided
     if column_mapping:
@@ -48,13 +100,18 @@ try:
     
 except FileNotFoundError:
     print("Error: File not found. Please check the path and try again.")
+    df = None
 except ValueError as e:
     print(f"Error: {e}")
+    df = None
 except Exception as e:
     print(f"Unexpected error: {e}")
+    df = None
 
 # The dataframe is now loaded and validated
-
+if df is None:
+    print("Cannot proceed without valid data. Exiting.")
+    exit()
 
 
 
@@ -147,7 +204,12 @@ def calculate_total_savings(df):
     return total_savings
 
 # Calculate total savings from data
-total_savings = calculate_total_savings(df)
+if df is not None:
+    total_savings = calculate_total_savings(df)
+else:
+    total_savings = 0
+    print("\nCannot proceed without valid data.")
+    exit()
 
 def calculate_emergency_runway(monthly_cashflow, savings):
     """
